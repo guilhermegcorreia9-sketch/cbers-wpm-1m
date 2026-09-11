@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Created by Miguel Alexandre da Cunha
+# Created by Miguel Alexandre da Cunha; Guilherme Gomes Correia
 import os
 
 from qgis.PyQt.QtCore import QSize
@@ -8,7 +8,7 @@ from qgis.PyQt.QtWidgets import QAction, QToolBar
 
 from .cbers_wpm_dialog import CbersWpmDialog
 
-PLUGIN_DIR = os.path.dirname(__file__)
+PLUGIN_DIR = os.path.abspath(os.path.dirname(__file__))
 
 class CbersWpmPlugin:
     """Ponto de entrada do plugin, exigido pelo QGIS (classFactory)."""
