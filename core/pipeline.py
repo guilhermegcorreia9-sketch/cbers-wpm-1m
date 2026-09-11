@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Created by Miguel Alexandre da Cunha
-import os, re, glob, shutil, tempfile, subprocess, gc, threading
+# Created by Miguel Alexandre da Cunha; Guilherme Gomes Correia
+import os, re, glob, shutil, tempfile, subprocess, gc, threading, platform
 from datetime import datetime, timedelta
 import xml.etree.ElementTree as ET
 
@@ -226,6 +226,39 @@ def fetch_thumbnail_bytes(url, timeout=12):
     r.raise_for_status()
     return r.content
 
+def _build_tclt_env(tclt_exe):
+    """Devolve (env_dict, resumo) para execução do TCLT.
+    No Windows retorna o ambiente atual inalterado.
+    No Linux adiciona LD_LIBRARY_PATH / PROJ_DATA / PROJ_LIB apontando
+    para tclt/lib e tclt/share/proj encontrados ao lado do executável."""
+    env = dict(os.environ)
+    if platform.system() != "Linux":
+        return env, None
+
+    exe_dir = os.path.dirname(os.path.abspath(tclt_exe))
+    candidates = [exe_dir, os.path.dirname(exe_dir), os.path.join(exe_dir, "tclt")]
+
+    lib_dir = proj_dir = None
+    for root in candidates:
+        cand_lib  = os.path.join(root, "lib")
+        cand_proj = os.path.join(root, "share", "proj")
+        if lib_dir  is None and os.path.isdir(cand_lib):  lib_dir  = cand_lib
+        if proj_dir is None and os.path.isdir(cand_proj): proj_dir = cand_proj
+        if lib_dir and proj_dir:
+            break
+
+    notes = []
+    if lib_dir:
+        existing = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = lib_dir + (os.pathsep + existing if existing else "")
+        notes.append(f"LD_LIBRARY_PATH={lib_dir}")
+    if proj_dir:
+        env["PROJ_DATA"] = proj_dir
+        env["PROJ_LIB"]  = proj_dir
+        notes.append(f"PROJ_DATA/PROJ_LIB={proj_dir}")
+
+    return env, ("  ".join(notes) if notes else None)
+
 def run_pipeline(params, log=print, should_cancel=None):
     """Executa o pipeline completo do CBERS-4A/WPM e retorna a lista de
     caminhos dos produtos finais gerados (RGB e NRGB).
@@ -268,6 +301,8 @@ def run_pipeline(params, log=print, should_cancel=None):
 
     DATE_SEARCH_STEP_DAYS = 5
     DATE_SEARCH_MAX_DAYS  = 60
+
+    TCLT_EXE = os.path.abspath(os.path.expanduser(TCLT_EXE))
 
     if not STAC_ITEMS and not TARGET_DATE:
         raise PipelineError("Informe stac_items (cenas selecionadas na interface) ou target_date.")
@@ -586,7 +621,7 @@ def run_pipeline(params, log=print, should_cancel=None):
           VERTICE_END
         """
 
-            content = f"""#Define arquivos imagem de entrada multiespectrais e Pancromatica
+            content = f """#Define arquivos imagem de entrada multiespectrais e Pancromatica
         CONTEXT_START
           CONTEXT_NAME "Context_Name_1"
           RESOURCE_URI "raster resource B_0" "{to_uri(preproc_files['BAND0'])}"
@@ -927,10 +962,14 @@ def run_pipeline(params, log=print, should_cancel=None):
 
         def run_tclt_once(moravec_value):
             generate_tclt_txt(project_txt, preprocessed_paths, ROI_VECTOR_PATH, ROI_VECTOR_PATH,
-                               analysis_name, moravec_value)
+                            analysis_name, moravec_value)
             log(f"Projeto TCLT gerado em (MORAVEC_MIN_ABS_CORR={moravec_value}):", project_txt)
 
-            bat_content = f"""@echo off
+            _check_cancel()
+            log("Executando o TCLT (isso pode demorar um pouco)...")
+
+            if platform.system() == "Windows":
+                bat_content = f """@echo off
         if exist "{log_file}" del "{log_file}"
 
         "{TCLT_EXE}" --threads_number={THREADS} --project_file_name="{project_txt}" --output_directory="{TEMP_DIR}" >> "{log_file}"
@@ -944,12 +983,44 @@ def run_pipeline(params, log=print, should_cancel=None):
         echo "Concluído"
         exit /b 0
         """
-            with open(batch_file, 'w', encoding='utf-8') as f:
-                f.write(bat_content)
+                with open(batch_file, 'w', encoding='utf-8') as f:
+                    f.write(bat_content)
 
-            _check_cancel()
-            log("Executando o TCLT (isso pode demorar um pouco)...")
-            result = subprocess.run(batch_file, shell=True, cwd=TEMP_DIR, capture_output=True, text=True)
+                result = subprocess.run(batch_file, shell=True, cwd=TEMP_DIR,
+                                        capture_output=True, text=True)
+            else:
+                env, notes = _build_tclt_env(TCLT_EXE)
+                if notes:
+                    log(f"Ambiente do TCLT (Linux): {notes}")
+
+                try:
+                    if not os.access(TCLT_EXE, os.X_OK):
+                        os.chmod(TCLT_EXE, os.stat(TCLT_EXE).st_mode | 0o111)
+                        log(f"Permissão de execução concedida a {TCLT_EXE}")
+                except OSError as e:
+                    log(f"Aviso: não foi possível ajustar permissão em {TCLT_EXE}: {e}")
+
+                cmd = [
+                    TCLT_EXE,
+                    f"--threads_number={THREADS}",
+                    f"--project_file_name={project_txt}",
+                    f"--output_directory={TEMP_DIR}",
+                ]
+                result = subprocess.run(cmd, cwd=TEMP_DIR, env=env,
+                                        capture_output=True, text=True)
+
+                try:
+                    if os.path.exists(log_file):
+                        os.remove(log_file)
+                except OSError:
+                    pass
+                with open(log_file, 'w', encoding='utf-8') as lf:
+                    if result.stdout:
+                        lf.write(result.stdout)
+                    if result.stderr:
+                        lf.write("\n--- STDERR ---\n")
+                        lf.write(result.stderr)
+
             log(result.stdout)
 
             log_text = ""
