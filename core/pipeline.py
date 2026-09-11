@@ -621,7 +621,7 @@ def run_pipeline(params, log=print, should_cancel=None):
           VERTICE_END
         """
 
-            content = f """#Define arquivos imagem de entrada multiespectrais e Pancromatica
+            content = f"""#Define arquivos imagem de entrada multiespectrais e Pancromatica
         CONTEXT_START
           CONTEXT_NAME "Context_Name_1"
           RESOURCE_URI "raster resource B_0" "{to_uri(preproc_files['BAND0'])}"
@@ -969,7 +969,7 @@ def run_pipeline(params, log=print, should_cancel=None):
             log("Executando o TCLT (isso pode demorar um pouco)...")
 
             if platform.system() == "Windows":
-                bat_content = f """@echo off
+                bat_content = f"""@echo off
         if exist "{log_file}" del "{log_file}"
 
         "{TCLT_EXE}" --threads_number={THREADS} --project_file_name="{project_txt}" --output_directory="{TEMP_DIR}" >> "{log_file}"
