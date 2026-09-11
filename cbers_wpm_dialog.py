@@ -807,21 +807,21 @@ class CbersWpmDialog(QDialog):
         ]
 
     def _on_tclt_exe_changed(self, path):
-    """Normaliza o caminho e, no Linux, garante o bit de execução do binário."""
-    if not path:
-        return
-    path = os.path.abspath(os.path.expanduser(path))
-    if platform.system() != "Windows":
-        try:
-            if os.path.isfile(path) and not os.access(path, os.X_OK):
-                os.chmod(path, os.stat(path).st_mode | 0o111)
-        except OSError as exc:
-            self._append_log(
-                "Aviso: não foi possível conceder permissão de execução a "
-                "{}: {}".format(path, exc))
-    # Só reescreve se mudou, para não disparar loop de sinais
-    if path != self.tclt_exe_widget.filePath():
-        self.tclt_exe_widget.setFilePath(path)
+        """Normaliza o caminho e, no Linux, garante o bit de execução do binário."""
+        if not path:
+            return
+        path = os.path.abspath(os.path.expanduser(path))
+        if platform.system() != "Windows":
+            try:
+                if os.path.isfile(path) and not os.access(path, os.X_OK):
+                    os.chmod(path, os.stat(path).st_mode | 0o111)
+            except OSError as exc:
+                self._append_log(
+                    "Aviso: não foi possível conceder permissão de execução a "
+                    "{}: {}".format(path, exc))
+        # Só reescreve se mudou, para não disparar loop de sinais
+        if path != self.tclt_exe_widget.filePath():
+            self.tclt_exe_widget.setFilePath(path)
 
     def _collect_roi_params(self):
         params = {}
