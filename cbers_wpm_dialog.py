@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-# Created by Miguel Alexandre da Cunha
+# Created by Miguel Alexandre da Cunha; Guilherme Gomes Correia
 import os
 import math
+import platform
 from datetime import datetime
 
 from qgis.core import (
@@ -18,6 +19,7 @@ from qgis.PyQt import QtCore
 from qgis.PyQt.QtCore import Qt, QDate, QSize, QThread, pyqtSignal, QTimer
 from qgis.PyQt.QtGui import QIcon, QPixmap, QPalette
 from qgis.PyQt.QtWidgets import (
+    QApplication,
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
@@ -689,8 +691,17 @@ class CbersWpmDialog(QDialog):
 
         self.tclt_exe_widget = QgsFileWidget()
         self.tclt_exe_widget.setStorageMode(QgsFileWidget.GetFile)
-        self.tclt_exe_widget.setFilter("Executável (*.exe)")
-        tclt_form.addRow("Executável tclt_exe.exe:", self.tclt_exe_widget)
+
+        if platform.system() == "Windows":
+            self.tclt_exe_widget.setFilter("Executável (*.exe);;Todos os arquivos (*)")
+            exe_label = "Executável tclt_exe.exe:"
+        else:
+            self.tclt_exe_widget.setFilter("Executável (*);;Todos os arquivos (*)")
+            exe_label = "Executável tclt (Linux):"
+
+        tclt_form.addRow(exe_label, self.tclt_exe_widget)
+
+        self.tclt_exe_widget.fileChanged.connect(self._on_tclt_exe_changed)
 
         layout.addWidget(tclt_group)
         layout.addStretch(1)
@@ -794,6 +805,23 @@ class CbersWpmDialog(QDialog):
             (min_lon, max_lat),
             (min_lon, min_lat)
         ]
+
+    def _on_tclt_exe_changed(self, path):
+    """Normaliza o caminho e, no Linux, garante o bit de execução do binário."""
+    if not path:
+        return
+    path = os.path.abspath(os.path.expanduser(path))
+    if platform.system() != "Windows":
+        try:
+            if os.path.isfile(path) and not os.access(path, os.X_OK):
+                os.chmod(path, os.stat(path).st_mode | 0o111)
+        except OSError as exc:
+            self._append_log(
+                "Aviso: não foi possível conceder permissão de execução a "
+                "{}: {}".format(path, exc))
+    # Só reescreve se mudou, para não disparar loop de sinais
+    if path != self.tclt_exe_widget.filePath():
+        self.tclt_exe_widget.setFilePath(path)
 
     def _collect_roi_params(self):
         params = {}
@@ -988,8 +1016,20 @@ class CbersWpmDialog(QDialog):
 
         tclt_exe = self.tclt_exe_widget.filePath()
         if not tclt_exe:
-            raise ValueError("Informe o caminho do executável tclt_exe.exe.")
+            nome_padrao = "tclt_exe.exe" if platform.system() == "Windows" else "tclt"
+            raise ValueError("Informe o caminho do executável {}.".format(nome_padrao))
+
+        tclt_exe = os.path.abspath(os.path.expanduser(tclt_exe))
+        if not os.path.isfile(tclt_exe):
+            raise ValueError("O executável informado não existe: {}".format(tclt_exe))
+
+        if platform.system() != "Windows" and not os.access(tclt_exe, os.X_OK):
+            raise ValueError(
+                "O arquivo '{}' não tem permissão de execução no Linux. "
+                "Rode `chmod +x` nele ou selecione outro binário.".format(tclt_exe))
+
         params["tclt_exe"] = tclt_exe
+
         params["threads"] = FIXED_THREADS
 
         output_dir = self.output_dir_widget.filePath()
@@ -1034,6 +1074,15 @@ class CbersWpmDialog(QDialog):
             self.task.cancel()
             self._append_log("Cancelamento solicitado — aguardando o TCLT encerrar...")
             self.cancel_button.setEnabled(False)
+            # Trava de segurança: se em 30s a task não terminar, avisa o usuário.
+            QTimer.singleShot(30000, self._warn_if_still_running)
+
+    def _warn_if_still_running(self):
+        if self.task is not None and self.task.isActive():
+            self._append_log(
+                "O TCLT ainda não respondeu ao cancelamento. Em Linux, "
+                "verifique se o processo foi encerrado (`pkill -f tclt`) caso "
+                "ele persista após o diálogo ser fechado.")
 
     def _on_task_finished_ok(self):
         self._append_log("Processamento concluído com sucesso.")
