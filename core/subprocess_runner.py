@@ -1,9 +1,26 @@
 # -*- coding: utf-8 -*-
-# Created by Miguel Alexandre da Cunha
+# Created by Miguel Alexandre da Cunha; Guilherme Gomes Correia
 import sys
 import os
 import json
+import signal
 import traceback
+
+_CANCEL_REQUESTED = False
+
+def _install_signal_handlers():
+    def _handle(signum, frame):
+        global _CANCEL_REQUESTED
+        _CANCEL_REQUESTED = True
+
+    for sig_name in ("SIGTERM", "SIGINT", "SIGBREAK"):
+        sig = getattr(signal, sig_name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _handle)
+        except (ValueError, OSError):
+            pass
 
 def main():
     if len(sys.argv) != 4:
@@ -22,10 +39,18 @@ def main():
         params = json.load(f)
 
     def log(*args):
-        print("LOG: " + " ".join(str(a) for a in args), flush=True)
+        msg = "LOG: " + " ".join(str(a) for a in args)
+        try:
+            print(msg, flush=True)
+        except UnicodeEncodeError:
+            enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+            safe = msg.encode(enc, errors="replace").decode(enc, errors="replace")
+            print(safe, flush=True)
 
     def should_cancel():
-        return False
+        return _CANCEL_REQUESTED
+
+    _install_signal_handlers()
 
     result = {"ok": False, "outputs": [], "results": [], "error": None}
     try:
@@ -44,8 +69,10 @@ def main():
     except Exception as exc:
         result["error"] = "Erro inesperado: {}\n\n{}".format(exc, traceback.format_exc())
 
-    with open(result_path, "w", encoding="utf-8") as f:
-        json.dump(result, f)
+    tmp_path = result_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False)
+    os.replace(tmp_path, result_path)
 
     sys.exit(0 if result["ok"] else 1)
 
